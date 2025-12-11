@@ -1,0 +1,16 @@
+# Python junk
+__pycache__/
+*.py[cod]
+.venv/
+
+# PyInstaller junk
+build/
+dist/
+*.spec
+
+# Credentials (NEVER PUSH THIS)
+wifi_map.json
+
+# IDE settings
+.vscode/
+.idea/
