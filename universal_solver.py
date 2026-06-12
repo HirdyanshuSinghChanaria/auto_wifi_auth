@@ -1,7 +1,11 @@
 import requests
 import re
+import urllib3
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
+
+# Suppress annoying InsecureRequestWarning for self-signed portal certificates
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Common username field name hints across various captive portals
 USERNAME_HINTS = {'user', 'login', 'id', 'email', 'mobile', 'phone', 'roll', 'enroll', 'name', 'uid'}
@@ -48,7 +52,7 @@ class UniversalSolver:
         probe_url = "http://www.msftconnecttest.com/connecttest.txt"
         
         try:
-            response = self.session.get(probe_url, timeout=5, allow_redirects=True)
+            response = self.session.get(probe_url, timeout=5, allow_redirects=True, verify=False)
             
             # If we see "Microsoft Connect Test", we are online.
             if "Microsoft Connect Test" in response.text:
@@ -62,7 +66,7 @@ class UniversalSolver:
                 if real_url:
                     print(f">> Found hidden redirect! Jumping to: {real_url}")
                     # Recursively get the real page
-                    return self.session.get(real_url)
+                    return self.session.get(real_url, verify=False)
                 
                 # Fix 1: Could not resolve the portal. Return None and surface the UI gracefully.
                 print(">> No redirect found. Could not locate login portal.")
@@ -156,9 +160,9 @@ class UniversalSolver:
 
         try:
             if form_details['method'] == 'post':
-                return self.session.post(target_url, data=payload)
+                return self.session.post(target_url, data=payload, verify=False)
             else:
-                return self.session.get(target_url, params=payload)
+                return self.session.get(target_url, params=payload, verify=False)
         except (requests.RequestException, requests.Timeout) as e:
             # Fix 8: Catch specific exceptions instead of bare except
             print(f"Login Error: {e}")

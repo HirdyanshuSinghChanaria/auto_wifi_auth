@@ -25,6 +25,7 @@ class WifiLoginApp(ctk.CTk):
         
         self.current_form = None
         self.is_monitoring = True
+        self.portal_fail_count = 0
 
         # Fix 9: Track portal IDs where auto-login has been verified to fail,
         # so we don't keep hammering bad credentials in a loop.
@@ -94,6 +95,7 @@ class WifiLoginApp(ctk.CTk):
             # 1. Check Internet
             if self.verify_internet():
                 # We are online. Go back to sleep.
+                self.portal_fail_count = 0
                 continue
             
             print(">> Internet down. Probing...")
@@ -103,9 +105,26 @@ class WifiLoginApp(ctk.CTk):
             
             if not portal_response:
                 # Fluke packet loss or portal unreachable. Retry next loop.
+                self.portal_fail_count += 1
+                print(f">> No portal found. (Attempt {self.portal_fail_count}/3)")
+                if self.portal_fail_count >= 3:
+                    print(">> Repeatedly failed to find portal. Surfacing UI.")
+                    ssid = self.net_man.get_ssid() or "Unknown Network"
+                    self.after(0, self.show_ui, ssid)
+                    
+                    def show_no_portal_error():
+                        self.lbl_error.configure(text="No internet & no login portal found.", text_color="red")
+                    self.after(0, show_no_portal_error)
+                    
+                    # Pause loop while user looks at the UI
+                    while self.state() == "normal":
+                        time.sleep(1)
+                    
+                    self.portal_fail_count = 0  # Reset after UI is closed
                 continue
 
             # 3. Analyze the Portal
+            self.portal_fail_count = 0  # Reset because we found a portal
             with self._form_lock:
                 self.current_form = self.solver.analyze_page(portal_response)
             
