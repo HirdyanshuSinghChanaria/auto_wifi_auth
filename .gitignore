@@ -8,8 +8,13 @@ build/
 dist/
 *.spec
 
-# Credentials (NEVER PUSH THIS)
+# Credentials (NEVER PUSH THESE)
 wifi_map.json
+*.bak
+wifi_map.json.bak
+
+# macOS junk
+.DS_Store
 
 # IDE settings
 .vscode/

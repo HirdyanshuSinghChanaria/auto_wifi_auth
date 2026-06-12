@@ -1,197 +1,165 @@
 import requests
+import re
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
-import re
+
+# Common username field name hints across various captive portals
+USERNAME_HINTS = {'user', 'login', 'id', 'email', 'mobile', 'phone', 'roll', 'enroll', 'name', 'uid'}
 
 class UniversalSolver:
     def __init__(self):
-        # Create a session to store cookies (essential for session-based firewalls)
         self.session = requests.Session()
-        
-        # Mimic a modern Laptop (Windows 10 Chrome) to avoid being blocked
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1'
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
         })
 
-    def get_portal_identifier(self, full_url):
+    def find_redirect_url(self, html_content):
         """
-        Extracts the unique 'Host' from the URL.
-        Use this to identify the portal even if the SSID changes.
+        Hunts for hidden JavaScript or Meta redirects that Python usually misses.
         """
-        parsed = urlparse(full_url)
-        return f"{parsed.scheme}://{parsed.netloc}"
+        # 1. Check for Meta Refresh (e.g., <meta http-equiv="refresh" content="0;url=...">)
+        soup = BeautifulSoup(html_content, 'html.parser')
+        meta = soup.find('meta', attrs={'http-equiv': re.compile("refresh", re.I)})
+        if meta:
+            content = meta.get('content', '')
+            if 'url=' in content.lower():
+                return content.split('url=')[-1].strip()
+
+        # 2. Check for JavaScript redirects (window.location = ...)
+        patterns = [
+            r'window\.location\s*=\s*[\'\"](.*?)[\'\"]',
+            r'location\.href\s*=\s*[\'\"](.*?)[\'\"]',
+            r'location\.replace\([\'\"](.*?)[\'\"]\)',
+            r'window\.open\([\'\"](.*?)[\'\"]\)'
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, html_content)
+            if match:
+                return match.group(1)
+        
+        return None
 
     def get_portal_page(self):
         """
-        Probes the network.
-        Returns: 
-        - response object (if trapped in portal)
-        - "ONLINE" string (if internet is working)
-        - None (if network is down/unreachable)
+        Probes the network and specifically handles the 'Loop' issue.
         """
-        print(">> Probing network...")
+        # We use a standard HTTP probe
+        probe_url = "http://www.msftconnecttest.com/connecttest.txt"
+        
         try:
-            # Probe 1: NeverSSL (HTTP)
-            response = self.session.get("http://neverssl.com", timeout=10, allow_redirects=True)
+            response = self.session.get(probe_url, timeout=5, allow_redirects=True)
             
-            # If we see "NeverSSL" text, we are actually ONLINE.
-            if "NeverSSL" in response.text:
-                return "ONLINE"
-            
-            # Otherwise, we are at a login page
-            return response
+            # If we see "Microsoft Connect Test", we are online.
+            if "Microsoft Connect Test" in response.text:
+                return None 
 
-        except requests.exceptions.RequestException:
-            # Probe 2: Fallback to Cloudflare IP (Bypass DNS errors)
-            try:
-                response = self.session.get("http://1.1.1.1", timeout=5, allow_redirects=True)
-                if "Cloudflare" in response.text:
-                    return "ONLINE"
-                return response
-            except:
+            # CRITICAL: If we are stuck on the Microsoft URL, look for a hidden redirect
+            if "msftconnecttest" in response.url:
+                print(">> Stuck on 'Loading' page. Hunting for real login link...")
+                real_url = self.find_redirect_url(response.text)
+                
+                if real_url:
+                    print(f">> Found hidden redirect! Jumping to: {real_url}")
+                    # Recursively get the real page
+                    return self.session.get(real_url)
+                
+                # Fix 1: Could not resolve the portal. Return None and surface the UI gracefully.
+                print(">> No redirect found. Could not locate login portal.")
                 return None
+
+            return response
+        except (requests.RequestException, requests.Timeout) as e:
+            # Fix 8: Catch specific exceptions instead of bare except
+            print(f">> Network probe error: {e}")
+            return None
+
+    def get_portal_identifier(self, url):
+        return urlparse(url).netloc
 
     def analyze_page(self, response):
         """
-        Scrapes HTML to find the login form structure.
-        Handles standard HTML Forms AND JavaScript Redirects.
+        YOUR CONDITIONAL LOGIC IMPLEMENTATION.
+        Instead of scoring, we just check each input and decide what to do.
         """
         soup = BeautifulSoup(response.text, 'html.parser')
-        forms = soup.find_all('form')
         
-        # --- LOGIC FIX: HANDLE JS REDIRECT ---
-        # Some firewalls (like Fortinet) return a page with NO forms, just a JS redirect.
-        if len(forms) == 0:
-            print(">> No forms found. Checking for JavaScript Redirect...")
-            # Look for patterns like: window.location="URL" or window.location.href="URL"
-            match = re.search(r'window\.location\.?h?r?e?f?\s*=\s*"([^"]+)"', response.text)
-            
-            if match:
-                redirect_url = match.group(1)
-                print(f">> JS Redirect Detected! Following to: {redirect_url}")
-                
-                try:
-                    # Recursively follow the link to find the real page
-                    new_response = self.session.get(redirect_url, allow_redirects=True)
-                    # Recursively analyze the NEW page
-                    return self.analyze_page(new_response)
-                except Exception as e:
-                    print(f">> Failed to follow JS redirect: {e}")
-                    return None
-            else:
-                print(">> No JS redirect found either.")
-                return None
-        # -------------------------------------
+        form_details = {
+            'action': "",
+            'method': "post",
+            'inputs': [],
+            'user_field': None,
+            'pass_field': None,
+            'page_url': response.url
+        }
 
-        print(f">> Found {len(forms)} forms on the page.")
+        # 1. Hunt for Password Field (Must exist)
+        pass_input = soup.find('input', {'type': 'password'})
+        if not pass_input:
+            print(">> Still no password field. Dumping HTML to debug...")
+            # print(response.text[:200]) # Uncomment to see what page we are actually on
+            return None
+        
+        form_details['pass_field'] = pass_input.get('name')
 
-        best_form = None
-        highest_score = 0
+        # 2. Loop through ALL inputs and apply Conditional Logic
+        all_inputs = soup.find_all('input')
+        
+        for inp in all_inputs:
+            name = inp.get('name', '').lower()
+            typ = inp.get('type', 'text').lower()
+            val = inp.get('value', '')
 
-        for index, form in enumerate(forms):
-            # Calculate the full URL for the form action
-            action_url = urljoin(response.url, form.get('action', ''))
-            
-            form_details = {
-                "id": index,
-                "action": action_url,
-                "method": form.get('method', 'POST').upper(),
-                "inputs": []
-            }
-            
-            current_score = 0
-            has_password = False
-            
-            # Find all inputs (and buttons) in this form
-            all_inputs = form.find_all(['input', 'button'])
-            
-            for inp in all_inputs:
-                name = inp.get('name')
-                inp_type = inp.get('type', 'text').lower()
-                value = inp.get('value', '')
-                
-                field_role = "unknown"
-                
-                # HEURISTIC 1: Password Field
-                if inp_type == "password":
-                    field_role = "password"
-                    has_password = True
-                    current_score += 10
-                
-                # HEURISTIC 2: Hidden Tokens (Critical for Firewalls)
-                elif inp_type == "hidden":
-                    field_role = "hidden"
-                    current_score += 1
-                
-                # HEURISTIC 3: Username Field
-                elif inp_type in ["text", "email"]:
-                    if name and any(x in name.lower() for x in ['user', 'name', 'login', 'id', 'email', 'auth']):
-                        field_role = "username"
-                        current_score += 5
-                    else:
-                        field_role = "text"
-                
-                if name: 
-                    form_details['inputs'].append({
-                        "name": name,
-                        "type": inp_type,
-                        "value": value,
-                        "role": field_role
-                    })
+            if not name: continue
 
-            # If it has a password field, it's likely the winner
-            if has_password and current_score > highest_score:
-                highest_score = current_score
-                best_form = form_details
+            # Condition: If it's a hidden token, keep it.
+            if typ == 'hidden':
+                form_details['inputs'].append({'name': name, 'value': val})
+            
+            # Fix 5: Widen username field detection to cover more portal types
+            elif typ == 'text' or typ == 'email':
+                if any(hint in name for hint in USERNAME_HINTS):
+                    form_details['user_field'] = inp.get('name')
 
-        return best_form
+        # 3. Handle the 'Action' (Where to submit)
+        # First, try to find the parent form
+        parent = pass_input.find_parent('form')
+        if parent:
+            form_details['action'] = parent.get('action') or ""
+            form_details['method'] = parent.get('method', 'post').lower()
+        else:
+            # Condition: If orphan inputs (Cyberoam/Sophos), force login.xml
+            print(">> Orphan inputs detected. Forcing standard actions.")
+            if "httpclient.html" in response.url:
+                 form_details['action'] = "login.xml"
+                 # Cyberoam specific patch
+                 if not any(x['name'] == 'mode' for x in form_details['inputs']):
+                     form_details['inputs'].append({'name': 'mode', 'value': '191'})
+
+        return form_details
 
     def login(self, form_details, username, password):
-        """
-        Constructs the payload and submits the form.
-        """
-        payload = {}
-        
-        print(f">> Preparing login payload for: {form_details['action']}")
-        
-        for inp in form_details['inputs']:
-            if inp['role'] == 'username':
-                payload[inp['name']] = username
-            elif inp['role'] == 'password':
-                payload[inp['name']] = password
-            elif inp['role'] == 'hidden':
-                # ALWAYS send hidden tokens back exactly as received
-                payload[inp['name']] = inp['value']
-            # Ignore generic text fields
-            
-        try:
-            # Set headers to look like a real browser submission
-            headers = {
-                'Referer': form_details['action'],
-                'Origin': self.get_portal_identifier(form_details['action'])
-            }
-            
-            if form_details['method'] == 'POST':
-                resp = self.session.post(form_details['action'], data=payload, headers=headers)
-            else:
-                resp = self.session.get(form_details['action'], params=payload, headers=headers)
-                
-            return resp
-        except Exception as e:
-            print(f">> Submission Error: {e}")
+        if not form_details or not form_details['pass_field']:
             return None
 
-if __name__ == "__main__":
-    # Quick Test
-    solver = UniversalSolver()
-    page = solver.get_portal_page()
-    if page == "ONLINE":
-        print("You are Online.")
-    elif page:
-        print("Portal Found. Analyzing...")
-        form = solver.analyze_page(page)
-        if form:
-            print("SUCCESS: Found Login Form!")
+        # Prepare Payload
+        payload = {}
+        if form_details['user_field']:
+            payload[form_details['user_field']] = username
+        payload[form_details['pass_field']] = password
+        
+        for inp in form_details['inputs']:
+            payload[inp['name']] = inp['value']
+
+        target_url = urljoin(form_details['page_url'], form_details['action'])
+        print(f">> Logging in to: {target_url}")
+
+        try:
+            if form_details['method'] == 'post':
+                return self.session.post(target_url, data=payload)
+            else:
+                return self.session.get(target_url, params=payload)
+        except (requests.RequestException, requests.Timeout) as e:
+            # Fix 8: Catch specific exceptions instead of bare except
+            print(f"Login Error: {e}")
+            return None
