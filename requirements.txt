@@ -1,0 +1,8 @@
+# Runtime dependencies
+customtkinter>=5.2
+requests>=2.31
+beautifulsoup4>=4.12
+keyring>=24
+
+# Build-only (needed to produce the standalone app):
+# pip install pyinstaller

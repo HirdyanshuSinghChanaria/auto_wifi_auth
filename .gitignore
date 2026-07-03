@@ -3,10 +3,10 @@ __pycache__/
 *.py[cod]
 .venv/
 
-# PyInstaller junk
+# PyInstaller junk (WifiAutoLogin.spec itself IS tracked — the README build
+# instructions depend on it)
 build/
 dist/
-*.spec
 
 # Credentials (NEVER PUSH THIS)
 wifi_map.json
@@ -20,3 +20,6 @@ wifi_map.json.bak
 # IDE settings
 .vscode/
 .idea/
+
+# Claude Code local session settings
+.claude/

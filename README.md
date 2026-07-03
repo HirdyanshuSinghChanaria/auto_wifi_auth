@@ -14,7 +14,7 @@ The app runs silently in your system background, monitors your connection, detec
 
 ```mermaid
 graph TD
-    A([Start Daemon]) --> B[Check Internet via Google 204]
+    A([Start Daemon]) --> B[Check Internet via Connectivity Probe]
     B -->|Online| C[Sleep 5 seconds]
     C --> B
     B -->|Offline| D[Probe Captive Portal]
@@ -43,7 +43,7 @@ graph TD
 
 ## ✨ Key Features
 
-*   **Silent Background Operation:** Runs invisibly as a background daemon, only displaying a UI when user interaction is required (e.g., credentials need input or update).
+*   **Silent Background Operation:** Runs invisibly as a background daemon, only displaying a UI when user interaction is required (e.g., credentials need input or update). Closing the window hides it — the daemon keeps running; use the **Quit App** button to exit fully.
 *   **Universal Captive Portal Parser:** Automatically scans the portal's HTML form to find username and password input fields and dynamically collects hidden request tokens.
 *   **Stale Token Bypass:** Re-fetches a fresh page and CSRF tokens right before login to prevent "Session Timeout" issues common to long-dormant portal pages.
 *   **Cyberoam/Sophos Special Case Support:** Automatically detects orphan form inputs (common on Cyberoam gateways) and forces submission to `/login.xml` with appropriate modes.
@@ -51,6 +51,7 @@ graph TD
 *   **Automatic Database Migration:** Automatically moves existing plain-text password entries from older versions into the secure OS Keychain database and updates metadata formats.
 *   **Thread-Safe UI:** Uses non-blocking background network threads and maps GUI updates back to the main thread via CustomTkinter safe loop scheduling.
 *   **Smart Login Failure Protection:** Tracks login portal domains that have failed authorization to prevent hammering the captive portal server in an infinite loop with wrong credentials.
+*   **Crash-Proof Daemon with File Logging:** The monitor loop survives unexpected errors, and all diagnostics are written to a rotating log file (`wifi_autologin.log`, next to `wifi_map.json`) — essential since the packaged app has no console.
 
 ---
 
@@ -71,11 +72,13 @@ The non-sensitive network mapping (`wifi_map.json`) is stored in standard applic
 
 ## 📂 Project Structure
 
-*   [main_ui.py](file:///Users/hirdyanshuchanaria/Desktop/NETLOG/main_ui.py): CustomTkinter-based GUI layout, startup management, thread-safe message scheduling, and background daemon loop.
-*   [universal_solver.py](file:///Users/hirdyanshuchanaria/Desktop/NETLOG/universal_solver.py): Core network probing logic, BeautifulSoup HTML parsing, and HTTP POST/GET request executors.
-*   [network_manager.py](file:///Users/hirdyanshuchanaria/Desktop/NETLOG/network_manager.py): Hardware integration layer that executes platform CLI utilities to fetch SSID names and verify active web connectivity.
-*   [storage.py](file:///Users/hirdyanshuchanaria/Desktop/NETLOG/storage.py): Manages persistent configurations, Keychain access, plaintext-to-keyring migrations, and database schema updates.
-*   [WifiAutoLogin.spec](file:///Users/hirdyanshuchanaria/Desktop/NETLOG/WifiAutoLogin.spec): Spec configuration file defining the building pipelines for PyInstaller executable compilation.
+*   [main_ui.py](main_ui.py): CustomTkinter-based GUI layout, startup management, thread-safe message scheduling, and background daemon loop.
+*   [universal_solver.py](universal_solver.py): Core network probing logic, BeautifulSoup HTML parsing, stale-token refresh, and HTTP POST/GET request executors.
+*   [network_manager.py](network_manager.py): Hardware integration layer that executes platform CLI utilities to fetch SSID names and verify active web connectivity.
+*   [storage.py](storage.py): Manages persistent configurations, Keychain access, plaintext-to-keyring migrations, and database schema updates.
+*   [app_logging.py](app_logging.py): Rotating file + console logging setup shared by all modules.
+*   [tests/](tests/): Offline unit tests for the portal HTML parser and credential lookup rules (`python3 -m unittest discover tests`).
+*   [WifiAutoLogin.spec](WifiAutoLogin.spec): Spec configuration file defining the building pipelines for PyInstaller executable compilation.
 
 ---
 
@@ -86,13 +89,21 @@ The non-sensitive network mapping (`wifi_map.json`) is stored in standard applic
 
 1.  **Install dependencies:**
     ```bash
-    pip install customtkinter requests beautifulsoup4 keyring pyinstaller
+    pip install -r requirements.txt
     ```
 
 2.  **Run the application:**
     ```bash
     python main_ui.py
     ```
+
+3.  **Run the tests:**
+    ```bash
+    python -m unittest discover tests
+    ```
+
+> [!TIP]
+> If something misbehaves, check the log file `wifi_autologin.log` in the same directory as `wifi_map.json` (paths listed above).
 
 ---
 

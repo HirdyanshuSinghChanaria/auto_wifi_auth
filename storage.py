@@ -1,6 +1,14 @@
 import json
+import logging
 import os
 import platform
+import sys
+
+log = logging.getLogger(__name__)
+
+# Sentinel SSIDs used when detection fails. Credentials must never be matched
+# by these — two different networks can both look "Unknown".
+UNKNOWN_SSIDS = {None, "", "Unknown", "Unknown Network"}
 
 
 def get_data_dir():
@@ -54,11 +62,10 @@ class CredentialStorage:
         self._migrate_plaintext_to_keyring()
 
         if self.keyring:
-            print(f">> [Storage] Using OS Keychain for passwords")
+            log.info("Using OS Keychain for passwords")
         else:
-            print(f">> [Storage] WARNING: 'keyring' not installed. Passwords stored in plaintext.")
-            print(f">> [Storage] Run: pip install keyring")
-        print(f">> [Storage] Metadata database: {self.filename}")
+            log.warning("'keyring' not installed. Passwords stored in plaintext. Run: pip install keyring")
+        log.info("Metadata database: %s", self.filename)
 
     def _migrate_old_data(self):
         """
@@ -66,7 +73,6 @@ class CredentialStorage:
         (from before the persistent storage fix), merge it into the new location
         and rename the old file to .bak so it doesn't re-import every launch.
         """
-        import sys
         if getattr(sys, 'frozen', False):
             old_dir = os.path.dirname(sys.executable)
         else:
@@ -92,10 +98,9 @@ class CredentialStorage:
 
             backup = old_file + ".bak"
             os.rename(old_file, backup)
-            print(f">> [Storage] Migrated {len(old_data)} entries from old database.")
-            print(f">> [Storage] Old file backed up to: {backup}")
+            log.info("Migrated %d entries from old database. Backup: %s", len(old_data), backup)
         except Exception as e:
-            print(f">> [Storage] Migration skipped (error: {e})")
+            log.warning("Migration skipped (error: %s)", e)
 
     def _migrate_plaintext_to_keyring(self):
         """
@@ -115,12 +120,12 @@ class CredentialStorage:
                     del info['password']
                     migrated += 1
                 except Exception as e:
-                    print(f">> [Storage] Keyring migration failed for {key}: {e}")
+                    log.warning("Keyring migration failed for %s: %s", key, e)
 
         if migrated > 0:
             with open(self.filename, 'w') as f:
                 json.dump(data, f, indent=4)
-            print(f">> [Storage] Moved {migrated} password(s) from plaintext to OS Keychain.")
+            log.info("Moved %d password(s) from plaintext to OS Keychain.", migrated)
 
     def ensure_file_exists(self):
         """Creates the JSON database if it doesn't exist."""
@@ -129,7 +134,7 @@ class CredentialStorage:
                 with open(self.filename, 'w') as f:
                     json.dump({}, f)
             except Exception as e:
-                print(f"Error creating DB: {e}")
+                log.error("Error creating DB: %s", e)
 
     def _read_data(self):
         """Helper to read the JSON file safely."""
@@ -160,7 +165,7 @@ class CredentialStorage:
             try:
                 self.keyring.set_password(KEYRING_SERVICE, key, password)
             except Exception as e:
-                print(f">> [Storage] Keychain save failed, falling back to plaintext: {e}")
+                log.warning("Keychain save failed, falling back to plaintext: %s", e)
                 data[key]["password"] = password
         else:
             # Fallback: store in JSON (plaintext)
@@ -169,9 +174,9 @@ class CredentialStorage:
         try:
             with open(self.filename, 'w') as f:
                 json.dump(data, f, indent=4)
-            print(f">> [Storage] Credentials saved for {ssid} (Key: {key})")
+            log.info("Credentials saved for %s (Key: %s)", ssid, key)
         except Exception as e:
-            print(f">> [Storage] Error saving: {e}")
+            log.error("Error saving credentials: %s", e)
 
     def get_credentials(self, ssid, portal_id):
         """
@@ -190,8 +195,10 @@ class CredentialStorage:
             entry = data[portal_id]
             entry_key = portal_id
 
-        # 2. Try SSID Match (Fallback)
-        if not entry:
+        # 2. Try SSID Match (Fallback) — but never for unknown/sentinel SSIDs.
+        # Two unrelated networks can both be "Unknown", and matching on that
+        # would send saved credentials to the wrong portal.
+        if not entry and ssid not in UNKNOWN_SSIDS:
             for key, info in data.items():
                 if info.get('ssid') == ssid:
                     entry = info
@@ -207,7 +214,7 @@ class CredentialStorage:
             try:
                 password = self.keyring.get_password(KEYRING_SERVICE, entry_key)
             except Exception as e:
-                print(f">> [Storage] Keychain read failed: {e}")
+                log.warning("Keychain read failed: %s", e)
 
         if not password:
             password = entry.get('password')
