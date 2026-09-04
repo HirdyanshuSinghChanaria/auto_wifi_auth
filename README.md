@@ -1,5 +1,6 @@
 # Auto WiFi Authentication 📶
-
+Annoyed with hostel wifi disconnecting during downloading a game overnight due to session timeout??
+Here's the solution!!
 A smart, cross-platform background service that automatically logs into Captive Portals (University/Hostel/Hotel WiFi). 
 
 It runs silently in the background, detects when internet access is blocked by a login page, and logs you in automatically using saved credentials.
